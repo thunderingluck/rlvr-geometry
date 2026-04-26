@@ -1,0 +1,27 @@
+{
+  "pair_name": "public_pair_deepscaler",
+  "earlier_model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+  "later_model": "agentica-org/DeepScaleR-1.5B-Preview",
+  "dtype_for_load": "float32",
+  "selected_layers": [
+    "model.layers.13.self_attn.q_proj.weight",
+    "model.layers.13.self_attn.o_proj.weight",
+    "model.layers.13.mlp.down_proj.weight"
+  ],
+  "primary_layer": "model.layers.13.self_attn.q_proj.weight",
+  "svd_top_k": 64,
+  "minibatch": {
+    "max_seq_len": 256,
+    "batch_size": 2,
+    "num_minibatches": 3,
+    "use_model_continuations": true,
+    "max_new_tokens": 96,
+    "continuation_temperature": 0.0
+  },
+  "curvature": {
+    "directions": ["realized", "principal", "nonprincipal", "random"],
+    "num_random_seeds": 3,
+    "loss": "token_nll_full_sequence"
+  },
+  "notes": "Curvature objective is token-level NLL on a fixed minibatch of math prompts + greedy continuations from the EARLIER checkpoint. This is a tractable proxy for the GRPO objective at the checkpoint, NOT the true GRPO Hessian. See CLAUDE.md methodological rule 3."
+}

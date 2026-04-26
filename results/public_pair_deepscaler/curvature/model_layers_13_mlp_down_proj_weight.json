@@ -1,0 +1,135 @@
+{
+  "layer_name": "model.layers.13.mlp.down_proj.weight",
+  "earlier_model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+  "later_model": "agentica-org/DeepScaleR-1.5B-Preview",
+  "svd_top_k": 64,
+  "frob": {
+    "dW": 0.1821662038564682,
+    "principal": 0.00816778838634491,
+    "nonprincipal": 0.18198378384113312
+  },
+  "directions": {
+    "realized": {
+      "norm_squared": 0.03322075307369232,
+      "frob_norm": 0.18226561133053137,
+      "per_minibatch_curvature": [
+        0.00024890925880528434,
+        0.00017808195223165005,
+        0.0001581391457704616
+      ],
+      "per_minibatch_vHv": [
+        8.268953024526127e-06,
+        5.916016561968718e-06,
+        5.2535015129251406e-06
+      ],
+      "mean_curvature": 0.00019504345254972577,
+      "std_curvature": 3.8949307054281235e-05,
+      "min_curvature": 0.00015813914069440216,
+      "max_curvature": 0.00024890925851650536
+    },
+    "principal": {
+      "norm_squared": 6.682001549052075e-05,
+      "frob_norm": 0.008174351074582052,
+      "per_minibatch_curvature": [
+        0.0014898004146870212,
+        -0.0005385489999650739,
+        0.0001732431615239213
+      ],
+      "per_minibatch_vHv": [
+        9.954848678717099e-08,
+        -3.5985852520070694e-08,
+        1.157611073665521e-08
+      ],
+      "mean_curvature": 0.000374831521185115,
+      "std_curvature": 0.0008402494713664055,
+      "min_curvature": -0.0005385489785112441,
+      "max_curvature": 0.001489800401031971
+    },
+    "nonprincipal": {
+      "norm_squared": 0.03315393626689911,
+      "frob_norm": 0.18208222391792975,
+      "per_minibatch_curvature": [
+        0.00022045138631779463,
+        0.0002215523341712791,
+        0.00015129206583899935
+      ],
+      "per_minibatch_vHv": [
+        7.308830390684307e-06,
+        7.3453311415505596e-06,
+        5.015926944906823e-06
+      ],
+      "mean_curvature": 0.00019776525732595474,
+      "std_curvature": 3.286458013462834e-05,
+      "min_curvature": 0.0001512920716777444,
+      "max_curvature": 0.00022155232727527618
+    },
+    "random_seed_0": {
+      "norm_squared": 0.03322174400091171,
+      "frob_norm": 0.18226832967060325,
+      "per_minibatch_curvature": [
+        1.7796702500087185e-06,
+        -5.861406171208275e-05,
+        4.694351758865641e-06
+      ],
+      "per_minibatch_vHv": [
+        5.912374945182819e-08,
+        -1.947261353052454e-06,
+        1.5595455238326394e-07
+      ],
+      "mean_curvature": -1.7380012650392018e-05,
+      "std_curvature": 2.918114660133142e-05,
+      "min_curvature": -5.861406316398643e-05,
+      "max_curvature": 4.694351900980109e-06
+    },
+    "random_seed_1": {
+      "norm_squared": 0.03322111815214157,
+      "frob_norm": 0.1822666128289588,
+      "per_minibatch_curvature": [
+        4.867607876340941e-06,
+        2.163882201509212e-05,
+        -2.0903126616907788e-05
+      ],
+      "per_minibatch_vHv": [
+        1.617073763782173e-07,
+        7.188658628365374e-07,
+        -6.94425239089469e-07
+      ],
+      "mean_curvature": 1.8677679918255308e-06,
+      "std_curvature": 1.7496735381428152e-05,
+      "min_curvature": -2.0903125914628617e-05,
+      "max_curvature": 2.163882163586095e-05
+    },
+    "random_seed_2": {
+      "norm_squared": 0.0332215316593647,
+      "frob_norm": 0.1822677471725722,
+      "per_minibatch_curvature": [
+        3.690364692781585e-05,
+        1.658825631897027e-05,
+        -9.242513111961122e-06
+      ],
+      "per_minibatch_vHv": [
+        1.225995674758451e-06,
+        5.510872824743274e-07,
+        -3.0705044196110975e-07
+      ],
+      "mean_curvature": 1.4749795809620991e-05,
+      "std_curvature": 1.8883889424614608e-05,
+      "min_curvature": -9.242513442586642e-06,
+      "max_curvature": 3.6903646105201915e-05
+    },
+    "random_aggregate": {
+      "n_seeds": 3,
+      "mean_of_seed_means": -2.541497963193251e-07,
+      "std_of_seed_means": 1.3202476111473516e-05,
+      "seed_means": [
+        -1.7380012650392018e-05,
+        1.8677679918255308e-06,
+        1.4749795809620991e-05
+      ]
+    }
+  },
+  "objective": "token_nll_full_sequence",
+  "num_minibatches": 3,
+  "minibatch_used_continuations": true,
+  "objective_proxy_note": "Curvature objective is token-level NLL on a fixed minibatch of math prompts + greedy continuations from the EARLIER checkpoint. This is a tractable proxy for the GRPO objective at the checkpoint, NOT the true GRPO Hessian. See CLAUDE.md methodological rule 3."
+}

@@ -1,0 +1,23 @@
+{
+  "model.layers.13.self_attn.q_proj.weight": {
+    "k": 64,
+    "sigma_1": 6.093165874481201,
+    "sigma_k": 3.4766387939453125,
+    "tail_energy_frac": 0.7023106264201767,
+    "file": "svd/model_layers_13_self_attn_q_proj_weight.pt"
+  },
+  "model.layers.13.self_attn.o_proj.weight": {
+    "k": 64,
+    "sigma_1": 6.562043190002441,
+    "sigma_k": 3.999068021774292,
+    "tail_energy_frac": 0.7767002018190964,
+    "file": "svd/model_layers_13_self_attn_o_proj_weight.pt"
+  },
+  "model.layers.13.mlp.down_proj.weight": {
+    "k": 64,
+    "sigma_1": 13.104798316955566,
+    "sigma_k": 5.602668762207031,
+    "tail_energy_frac": 0.86336055641618,
+    "file": "svd/model_layers_13_mlp_down_proj_weight.pt"
+  }
+}

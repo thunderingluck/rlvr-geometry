@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Large tensor / checkpoint artifacts
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Plots (regenerable)
+results/**/*.png
+results/**/*.pdf
+
+# Minibatches
+results/**/minibatch*

@@ -1,0 +1,115 @@
+{
+  "pair_name": "public_pair_deepscaler",
+  "earlier_model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+  "later_model": "agentica-org/DeepScaleR-1.5B-Preview",
+  "svd_top_k": 64,
+  "objective": "token_nll_full_sequence",
+  "objective_proxy_note": "Curvature objective is token-level NLL on a fixed minibatch of math prompts + greedy continuations from the EARLIER checkpoint. This is a tractable proxy for the GRPO objective at the checkpoint, NOT the true GRPO Hessian. See CLAUDE.md methodological rule 3.",
+  "per_layer": {
+    "model.layers.13.self_attn.q_proj.weight": {
+      "frob": {
+        "dW": 0.06987419724464417,
+        "principal": 0.0065104481764137745,
+        "nonprincipal": 0.06957012414932251
+      },
+      "mean_curvature": {
+        "realized": 0.0005972986691631377,
+        "principal": 9.664846584200859e-05,
+        "nonprincipal": 0.0005911716143600643
+      },
+      "std_curvature": {
+        "realized": 0.0005094435182400048,
+        "principal": 8.689001697348431e-05,
+        "nonprincipal": 0.0005035488866269588
+      },
+      "random_mean_curvature": 1.6038628018577583e-05,
+      "ranking_high_to_low": [
+        [
+          "realized",
+          0.0005972986691631377
+        ],
+        [
+          "nonprincipal",
+          0.0005911716143600643
+        ],
+        [
+          "principal",
+          9.664846584200859e-05
+        ]
+      ],
+      "principal_minus_nonprincipal": -0.0004945231485180557,
+      "principal_sharper_than_nonprincipal": false,
+      "max_relative_std_over_primary": 0.8990315181569831
+    },
+    "model.layers.13.self_attn.o_proj.weight": {
+      "frob": {
+        "dW": 0.07698357850313187,
+        "principal": 0.004275441635400057,
+        "nonprincipal": 0.07686488330364227
+      },
+      "mean_curvature": {
+        "realized": 0.0005253300769254565,
+        "principal": 1.568488914927002e-05,
+        "nonprincipal": 0.0005587605410255492
+      },
+      "std_curvature": {
+        "realized": 0.000581910542678088,
+        "principal": 0.00020115489314775914,
+        "nonprincipal": 0.0005505214212462306
+      },
+      "random_mean_curvature": 4.671600254368968e-05,
+      "ranking_high_to_low": [
+        [
+          "nonprincipal",
+          0.0005587605410255492
+        ],
+        [
+          "realized",
+          0.0005253300769254565
+        ],
+        [
+          "principal",
+          1.568488914927002e-05
+        ]
+      ],
+      "principal_minus_nonprincipal": -0.0005430756518762792,
+      "principal_sharper_than_nonprincipal": false,
+      "max_relative_std_over_primary": 12.824757078829656
+    },
+    "model.layers.13.mlp.down_proj.weight": {
+      "frob": {
+        "dW": 0.1821662038564682,
+        "principal": 0.00816778838634491,
+        "nonprincipal": 0.18198378384113312
+      },
+      "mean_curvature": {
+        "realized": 0.00019504345254972577,
+        "principal": 0.000374831521185115,
+        "nonprincipal": 0.00019776525732595474
+      },
+      "std_curvature": {
+        "realized": 3.8949307054281235e-05,
+        "principal": 0.0008402494713664055,
+        "nonprincipal": 3.286458013462834e-05
+      },
+      "random_mean_curvature": -2.541497963193251e-07,
+      "ranking_high_to_low": [
+        [
+          "principal",
+          0.000374831521185115
+        ],
+        [
+          "nonprincipal",
+          0.00019776525732595474
+        ],
+        [
+          "realized",
+          0.00019504345254972577
+        ]
+      ],
+      "principal_minus_nonprincipal": 0.00017706626385916024,
+      "principal_sharper_than_nonprincipal": true,
+      "max_relative_std_over_primary": 2.2416723884633982
+    }
+  }
+}

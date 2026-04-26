@@ -1,0 +1,32 @@
+{
+  "model.layers.13.self_attn.q_proj.weight": {
+    "shape": [
+      1536,
+      1536
+    ],
+    "frob_delta": 0.06987419724464417,
+    "frob_earlier": 62.26305389404297,
+    "rel_frob_delta": 0.0011222417288357484,
+    "file": "deltas/model_layers_13_self_attn_q_proj_weight.pt"
+  },
+  "model.layers.13.self_attn.o_proj.weight": {
+    "shape": [
+      1536,
+      1536
+    ],
+    "frob_delta": 0.07698357850313187,
+    "frob_earlier": 79.54228973388672,
+    "rel_frob_delta": 0.0009678320646876627,
+    "file": "deltas/model_layers_13_self_attn_o_proj_weight.pt"
+  },
+  "model.layers.13.mlp.down_proj.weight": {
+    "shape": [
+      1536,
+      8960
+    ],
+    "frob_delta": 0.1821662038564682,
+    "frob_earlier": 140.1134033203125,
+    "rel_frob_delta": 0.0013001340310035794,
+    "file": "deltas/model_layers_13_mlp_down_proj_weight.pt"
+  }
+}
