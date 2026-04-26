@@ -1,0 +1,16 @@
+# Core ML stack
+# Install torch first with the appropriate CUDA index URL (see README).
+torch==2.5.1
+transformers==4.46.3
+accelerate==1.2.1
+safetensors==0.4.5
+tokenizers==0.20.3
+sentencepiece==0.2.0
+
+# Hugging Face hub + fast transfer
+huggingface-hub==0.27.0
+hf_transfer==0.1.9
+
+# Numerics / plotting
+numpy==1.26.4
+matplotlib==3.10.0
