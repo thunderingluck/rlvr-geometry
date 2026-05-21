@@ -153,3 +153,68 @@ All three fired — **layer-dependent**:
   before any operator choice. The paper's "principal weights have higher
   curvature" picture cannot be cleanly tested on this layer without first
   resolving this k-instability.
+
+## Correction: noise floor + statistical undeterminability (2026-05-21)
+
+Adding the heuristic noise-floor flag `|P − C| < 2·σ_paired(per_mb_pmc)` to the
+sign-flip plot (where σ_paired is the std across minibatches of the per-mb
+*difference* P_mb − C_mb) collapses most of the colored cells in the table
+above to "undetermined". With n=3 minibatches:
+
+- 48 cells total
+- 0 cells are red (P>C) and survive the 2σ test
+- 6 cells are blue (P<C) and survive: o_proj subspace at k=256 (z=−2.7) and
+  k=512 (z=−5.3); mlp.down_proj coord α=0.05 at k=64 (z=−4.5) and k=512
+  (z=−4.8); mlp.down_proj coord α=0.30 at k=256 (z=−3.5) and k=512 (z=−5.7).
+- 42 cells are within 2σ of zero and therefore undetermined at this minibatch
+  count.
+
+The strict small-n t-rule (`|P − C| < t_{0.975,n−1} · σ_paired/√n`) agrees:
+42 undetermined under both rules.
+
+Implications for the layer-by-layer story we wrote above:
+
+- **q_proj** ostensibly had a "robust inversion" because every cell's mean
+  was negative and per-mb signs agreed. But every q_proj cell has z ∈
+  (−1.5, −0.8), so the apparent uniformity is *not* statistically resolvable
+  with 3 minibatches. The qualitative direction is consistent with inversion
+  but the magnitude can't be ranked against zero yet.
+- **o_proj subspace** at k=256 and k=512 is the cleanest single signal in
+  the experiment: large z scores and per-mb sign 0/3 — robustly inverted.
+  o_proj subspace at k=16 and k=64 remains undetermined.
+- **mlp.down_proj**'s previously highlighted "Phase 0A confirms paper at
+  k=64" result is in the noise zone (z=+0.2). The flip pattern across k for
+  the subspace operator is also entirely in the noise zone (every z ∈
+  (−0.5, +1.1)). The only signal that survives on this layer is the
+  coordinate-mask operator at low α (0.05 and 0.30) at the larger ks (256,
+  512), all of which point to inversion.
+
+**Net headline after the noise-floor correction:** the only statistically
+defensible Experiment A result with the current minibatch count is the
+*inversion* on o_proj at large k (subspace) and on mlp.down_proj at large k
+(coord-mask, low α). No cell shows the paper's ordering above noise. The
+prior qualitative summary that q_proj's inversion is "robust" needs to be
+softened to "directionally consistent but currently statistically
+indistinguishable from zero at n=3 minibatches". Increasing to 8–16
+minibatches is now load-bearing before any follow-on experiment, not optional.
+
+Plot: `results/public_pair_deepscaler/experiment_a/plots/sign_flip_grid.png`
+(red/blue cells = decisive; light-gray cells with `[u]` label = undetermined).
+Per-row noise-floor numbers are persisted to `summary.json` under
+`rows[].pmc_std`, `rows[].pmc_snr`, `rows[].noise_floor_2sigma`,
+`rows[].is_undetermined_2sigma`, `rows[].is_undetermined_strict_t`.
+
+## Engineering: shared HVP helpers + one-load model loader (2026-05-21)
+
+The Phase 0A driver and Experiment A driver previously each had their own
+model-load code path (Phase 0A reloaded the 1.5B fp32 weights once per layer
+inside `run_for_layer`; Experiment A loaded once at the top). Both now share
+`scripts/_hvp.py` which exposes `load_model_for_hvp`, `freeze_all_but`,
+`loss_fn`, `directional_curvature`, `matched_norm_random`. The shared loader
+sets fp32 + eager attention + `use_cache=False` + gradient-checkpointing-off,
+all of which are needed for the Pearlmutter HVP path. Verified by re-running
+both pipelines and bit-exactly reproducing every per-minibatch curvature
+value from the prior summaries. This matters because the next planned sweep
+(Experiment C, depth × matrix-type scan) is on the order of 35 layers; the
+previous per-layer reload pattern would have wasted ~20 minutes of I/O for
+no analytical benefit.

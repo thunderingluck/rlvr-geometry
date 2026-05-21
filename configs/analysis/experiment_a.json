@@ -18,6 +18,6 @@
     "loss": "token_nll_full_sequence",
     "out_subdir": "experiment_a"
   },
-  "minibatch_file": "minibatch.pt",
-  "notes": "Experiment A: sweep k for the SVD-subspace operator AND introduce the paper's coordinate-mask operator (M_princ = Top_alpha(|U_k diag(S_k) V_k^T|)). Tests whether the curvature inversion on attention layers (q/o_proj) found at k=64 with subspace projection is (a) k-stable and (b) operator-stable. The minibatch + earlier checkpoint + NLL proxy loss are reused from Phase 0A; only the direction set differs. Random direction is matched in Frobenius norm to dW (k/operator-independent) so the random baseline holds across all settings."
+  "minibatch_file": "minibatch_n16.pt",
+  "notes": "Experiment A: sweep k for the SVD-subspace operator AND introduce the paper's coordinate-mask operator (M_princ = Top_alpha(|U_k diag(S_k) V_k^T|)). Tests whether the curvature inversion on attention layers (q/o_proj) found at k=64 with subspace projection is (a) k-stable and (b) operator-stable. Now consumes minibatch_n16.pt (bs=2, nb=16) whose first 3 minibatches reproduce the Phase 0A n=3 batch bit-exactly; the additional 13 minibatches use the new prompts appended to FIXED_PROMPTS on 2026-05-21. Random direction is matched in Frobenius norm to dW (k/operator-independent) so the random baseline holds across all settings. Predictions for this run are pre-registered in docs/preregistration_n16.md."
 }

@@ -102,8 +102,12 @@ def main() -> None:
         "used_continuations": bool(mb_cfg.get("use_model_continuations", True)),
         "raw_sequences": sequences,
     }
-    torch.save(payload, out / "minibatch.pt")
-    print(f"[minibatch] saved {nb} minibatches of size {bs} to {out/'minibatch.pt'}")
+    # output_filename allows multiple minibatch sizes (e.g. n=3 and n=16) to
+    # coexist in the same pair's results dir. Defaults preserve old behavior.
+    out_name = mb_cfg.get("output_filename", "minibatch.pt")
+    out_path = out / out_name
+    torch.save(payload, out_path)
+    print(f"[minibatch] saved {nb} minibatches of size {bs} to {out_path}")
 
 
 if __name__ == "__main__":

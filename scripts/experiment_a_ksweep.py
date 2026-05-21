@@ -40,12 +40,12 @@ from pathlib import Path
 from typing import Iterable
 
 import torch
-from transformers import AutoModelForCausalLM
 
 from _common import device, load_config, results_root, safe_layer_filename
-from directional_curvature import (
+from _hvp import (
     directional_curvature,
     freeze_all_but,
+    load_model_for_hvp,
     matched_norm_random,
 )
 
@@ -295,19 +295,7 @@ def main() -> None:
 
     # Load model ONCE (reuse across layers). HVP requires eager attn (Phase 0A note).
     dev = device()
-    print(f"[init] loading earlier model in fp32 on {dev}...")
-    t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg["earlier_model"],
-        torch_dtype=torch.float32,
-        low_cpu_mem_usage=True,
-        attn_implementation="eager",
-    ).to(dev)
-    model.eval()
-    model.config.use_cache = False
-    if hasattr(model, "gradient_checkpointing_disable"):
-        model.gradient_checkpointing_disable()
-    print(f"[init] model loaded in {time.time() - t0:.1f}s")
+    model = load_model_for_hvp(cfg["earlier_model"], device=dev, dtype=torch.float32)
 
     mb_payload = torch.load(pair_out / cfg.get("minibatch_file", "minibatch.pt"),
                              map_location="cpu", weights_only=False)

@@ -13,6 +13,13 @@ We restrict v to a single layer (zero everywhere else) and run autograd only
 through that layer's weight by toggling requires_grad. This makes one Hv
 roughly the cost of a single backward pass.
 
+The shared HVP helpers (model loader, freeze_all_but, loss_fn,
+directional_curvature, matched_norm_random) live in `_hvp.py`; this script
+imports them and just orchestrates direction construction per layer.
+
+Public re-exports (back-compat) — older code imports these from here:
+    directional_curvature, freeze_all_but, matched_norm_random, loss_fn
+
 Outputs results/<pair>/curvature/<safe_layer>.json with per-direction stats
 and per-minibatch raw values for stability assessment.
 """
@@ -21,33 +28,17 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Iterable
 
 import torch
-import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from _common import device, load_config, results_root, safe_layer_filename
-
-
-def get_layer_param(model: torch.nn.Module, name: str) -> torch.nn.Parameter:
-    sd = dict(model.named_parameters())
-    if name not in sd:
-        raise KeyError(name)
-    return sd[name]
-
-
-def freeze_all_but(model: torch.nn.Module, layer_name: str) -> torch.nn.Parameter:
-    target = None
-    for n, p in model.named_parameters():
-        if n == layer_name:
-            p.requires_grad_(True)
-            target = p
-        else:
-            p.requires_grad_(False)
-    if target is None:
-        raise KeyError(layer_name)
-    return target
+from _hvp import (  # noqa: F401  (re-export for back-compat)
+    directional_curvature,
+    freeze_all_but,
+    load_model_for_hvp,
+    loss_fn,
+    matched_norm_random,
+)
 
 
 def project_principal(dW: torch.Tensor, U_k: torch.Tensor, Vt_k: torch.Tensor) -> torch.Tensor:
@@ -56,69 +47,19 @@ def project_principal(dW: torch.Tensor, U_k: torch.Tensor, Vt_k: torch.Tensor) -
     return U_k @ (U_k.T @ dW @ Vt_k.T) @ Vt_k
 
 
-def matched_norm_random(shape: torch.Size, target_norm: float, generator: torch.Generator,
-                         device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    v = torch.randn(*shape, generator=generator, device=device, dtype=dtype)
-    cur = v.norm()
-    if cur > 0:
-        v = v * (target_norm / cur)
-    return v
+def run_for_layer(
+    cfg: dict,
+    layer_name: str,
+    model: torch.nn.Module,
+    minibatches: list[dict],
+    dev: torch.device,
+) -> dict:
+    """Run all directions for one layer using a shared, already-loaded model.
 
-
-def loss_fn(model, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    """Mean per-token NLL on non-pad positions (causal LM, label-shifted)."""
-    out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
-    logits = out.logits  # (B, T, V)
-    shift_logits = logits[:, :-1, :].contiguous()
-    shift_labels = input_ids[:, 1:].contiguous()
-    shift_mask = attention_mask[:, 1:].contiguous().to(torch.bool)
-    flat_logits = shift_logits.view(-1, shift_logits.size(-1))
-    flat_labels = shift_labels.view(-1)
-    flat_mask = shift_mask.view(-1)
-    losses = F.cross_entropy(flat_logits, flat_labels, reduction="none")
-    masked = losses * flat_mask.to(losses.dtype)
-    return masked.sum() / flat_mask.sum().clamp_min(1)
-
-
-def directional_curvature(model: torch.nn.Module,
-                           target_param: torch.nn.Parameter,
-                           direction: torch.Tensor,
-                           input_ids: torch.Tensor,
-                           attention_mask: torch.Tensor) -> tuple[float, float, float]:
-    """Returns (vHv, ||v||^2, vHv / ||v||^2)."""
-    if direction.shape != target_param.shape:
-        raise ValueError(
-            f"direction shape {direction.shape} != param shape {target_param.shape}"
-        )
-    v = direction.to(target_param.device, dtype=target_param.dtype)
-    model.zero_grad(set_to_none=True)
-    L = loss_fn(model, input_ids, attention_mask)
-    g = torch.autograd.grad(L, target_param, create_graph=True)[0]
-    inner = (g * v).sum()
-    Hv = torch.autograd.grad(inner, target_param, retain_graph=False)[0]
-    vHv = float((Hv * v).sum().item())
-    norm2 = float((v * v).sum().item())
-    return vHv, norm2, vHv / max(norm2, 1e-30)
-
-
-def run_for_layer(cfg: dict, layer_name: str) -> dict:
+    `model` is expected to be the result of `_hvp.load_model_for_hvp(...)`. The
+    caller owns the lifetime (don't `del model` here).
+    """
     out = results_root(cfg["pair_name"])
-    dev = device()
-
-    # Load earlier checkpoint in fp32 for HVP precision. Use eager attention:
-    # the fused/SDPA paths raise "derivative for ..._attention_backward is not
-    # implemented" under double-backward (Pearlmutter HVP).
-    print(f"[curv] loading earlier model ({cfg['earlier_model']}) in fp32...")
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg["earlier_model"],
-        torch_dtype=torch.float32,
-        low_cpu_mem_usage=True,
-        attn_implementation="eager",
-    ).to(dev)
-    model.eval()
-    model.config.use_cache = False
-    if hasattr(model, "gradient_checkpointing_disable"):
-        model.gradient_checkpointing_disable()
 
     target = freeze_all_but(model, layer_name)
     print(f"[curv] target = {layer_name}  shape={tuple(target.shape)}  device={target.device}")
@@ -158,11 +99,8 @@ def run_for_layer(cfg: dict, layer_name: str) -> dict:
         ("nonprincipal", dW_nonprincipal),
     ] + random_dirs
 
-    # Load fixed minibatches.
-    mb_payload = torch.load(out / "minibatch.pt", map_location="cpu", weights_only=False)
-    minibatches = mb_payload["minibatches"]
-    print(f"[curv] {len(minibatches)} minibatches  bs={mb_payload['batch_size']}  "
-          f"seq_len={mb_payload['seq_len']}")
+    print(f"[curv] {len(minibatches)} minibatches  bs={minibatches[0]['input_ids'].shape[0]}  "
+          f"seq_len={minibatches[0]['input_ids'].shape[1]}")
 
     per_dir: dict[str, dict] = {}
     for dname, d in direction_set:
@@ -208,14 +146,9 @@ def run_for_layer(cfg: dict, layer_name: str) -> dict:
         "directions": per_dir,
         "objective": cfg["curvature"]["loss"],
         "num_minibatches": len(minibatches),
-        "minibatch_used_continuations": bool(mb_payload.get("used_continuations", False)),
+        "minibatch_used_continuations": None,  # filled by caller if available
         "objective_proxy_note": cfg.get("notes", ""),
     }
-
-    # Tear down model so subsequent layer runs start fresh.
-    del model
-    torch.cuda.empty_cache()
-
     return summary
 
 
@@ -235,9 +168,21 @@ def main() -> None:
     else:
         layers = [args.layer or cfg["primary_layer"]]
 
+    dev = device()
+    # Load the earlier checkpoint ONCE and reuse it for every requested layer.
+    # Previously this function reloaded the 1.5B fp32 weights inside the per-layer
+    # loop (~35 s per layer); a 35-cell sweep would burn ~20 min on I/O alone.
+    model = load_model_for_hvp(cfg["earlier_model"], device=dev,
+                                dtype=torch.float32)
+
+    # Pre-load minibatches once.
+    mb_payload = torch.load(out / "minibatch.pt", map_location="cpu", weights_only=False)
+    minibatches = mb_payload["minibatches"]
+
     for layer in layers:
         print(f"\n=== curvature for {layer} ===")
-        summary = run_for_layer(cfg, layer)
+        summary = run_for_layer(cfg, layer, model, minibatches, dev)
+        summary["minibatch_used_continuations"] = bool(mb_payload.get("used_continuations", False))
         path = out / "curvature" / f"{safe_layer_filename(layer)}.json"
         with open(path, "w") as f:
             json.dump(summary, f, indent=2)
