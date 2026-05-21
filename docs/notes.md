@@ -47,7 +47,109 @@
 - The MLP down-projection shows the opposite ordering but with high estimator noise — needs more minibatches before drawing any conclusion.
 
 ## Next obvious de-risking steps (suggested, not yet done)
-- Re-run with the **paper's principal-mask definition** (top-α |W^(k)_ij| as a coordinate mask) alongside the subspace projection, so we can directly compare the two proxies.
+- ~~Re-run with the **paper's principal-mask definition** (top-α |W^(k)_ij| as a coordinate mask) alongside the subspace projection, so we can directly compare the two proxies.~~ Done — see Experiment A below.
 - Increase the number of minibatches (e.g. 8–16) to tighten error bars on the down_proj layer.
 - Apply Hypothesis 4 controls: factor magnitude out (`Mlow ∩ M_princ`-style) before drawing geometric conclusions.
 - Repeat on the `Qwen2.5-Math-1.5B → DeepSeek-R1-Distill-Qwen-1.5B` pair (Phase 0B).
+
+---
+
+# Experiment A — k-sweep + coordinate-mask comparison
+
+## Question
+Does the curvature inversion observed at k=64 with SVD-subspace projection survive
+(a) varying k ∈ {16, 64, 256, 512}, and (b) switching from subspace projection to
+the source paper's coordinate-mask principal operator
+(`M_princ = Top_α(|W₀^(k)(i,j)|)`)?
+
+## Setup
+- Same earlier checkpoint, minibatch, NLL proxy loss, and target layers as Phase 0A.
+- Cached ΔW (Phase 0A) is reused; only the direction set changes.
+- Operators: (1) **subspace** projection `P_U dW P_V` at k ∈ {16,64,256,512};
+  (2) **coord_mask** projection `M ⊙ dW` where `M = Top_α(|W₀^(k)|)` for the
+  same k and α ∈ {0.05, 0.30, 0.50}.
+- Per layer: 36 direction tensors × 3 minibatches = 108 HVPs.
+- Driver: `scripts/run_experiment_a.sh`.
+
+## Headline (sign of principal − complement mean curvature; red = principal sharper, the paper claim)
+
+`results/public_pair_deepscaler/experiment_a/plots/sign_flip_grid.png`
+
+| Layer | Operator/α \ k | 16 | 64 | 256 | 512 |
+|---|---|---|---|---|---|
+| **q_proj** | subspace          | inverted | inverted | inverted | inverted |
+| q_proj     | coord α=0.05      | inverted | inverted | inverted | inverted |
+| q_proj     | coord α=0.30      | inverted | inverted | inverted | inverted |
+| q_proj     | coord α=0.50      | inverted | inverted | inverted | inverted |
+| **o_proj** | subspace          | inverted | inverted | inverted | inverted |
+| o_proj     | coord α=0.05      | inverted | inverted | inverted | inverted |
+| o_proj     | coord α=0.30      | **paper** | inverted | inverted | inverted |
+| o_proj     | coord α=0.50      | **paper** | **paper** | inverted | inverted |
+| **mlp.down_proj** | subspace   | **paper** | **paper** | inverted | inverted |
+| mlp.down_proj  | coord α=0.05  | inverted | inverted | inverted | inverted |
+| mlp.down_proj  | coord α=0.30  | **paper** | inverted | inverted | inverted |
+| mlp.down_proj  | coord α=0.50  | **paper** | inverted | ≈0 | ≈0 |
+
+## Interpretation (which of the three user-named branches actually fired)
+
+The three pre-registered branches were:
+1. **Inversion flips under coord-mask** → "paper right but only for their operator"
+2. **Inversion holds under both, all k** → "robust structural finding"
+3. **k-sensitive** → "fragile, saves us from publishing brittle result"
+
+All three fired — **layer-dependent**:
+
+- **q_proj — Branch 2 (robust).** 16/16 (operator × k × α) cells show the inversion (principal < complement curvature). Per-minibatch agreement is also high (0/3 or 1/3 minibatches show paper ordering, i.e. 2/3 or 3/3 agree with inversion). On q_proj the curvature inversion is genuinely robust to operator choice and rank choice.
+
+- **o_proj — Branch 1 (operator flip).** Subspace projection inverts at every k.
+  Coord-mask at α=0.50 with small k (16, 64) recovers the paper's ordering
+  (principal sharper than complement), then flips back to inverted at k=256,512.
+  Coord-mask at α=0.30 only flips at k=16. So on o_proj, the paper's reading
+  is operator-and-rank-specific: it holds in a thin slice near `(k≈16, α≈0.5)`
+  and fails everywhere else, including the subspace operator.
+
+- **mlp.down_proj — Branch 3 (k-sensitive).** This is the layer that supposedly
+  *confirmed* the paper at k=64 in Phase 0A. The k-sweep undermines that: subspace
+  projection gives the paper's ordering at k=16 (+6.7e-4 P-C) and k=64 (+1.8e-4
+  P-C), but **flips to inverted** at k=256 (-2.1e-4) and k=512 (-8.5e-5).
+  Coord-mask α=0.05 inverts at every k. α=0.30 supports paper only at k=16.
+  α=0.50 is essentially noise at k=256,512 (|P-C| ≈ 1e-6 << per-minibatch std).
+  The Phase 0A k=64 confirmation of Gate II on this layer does not generalize.
+
+## Methodological implications
+
+- **The Phase 0A headline finding ("RL update lies in lower-curvature directions
+  than principal subspaces, for q/o_proj") survives the k-sweep + operator
+  cross-check on attention layers q_proj and o_proj — for q_proj completely,
+  for o_proj over all combinations except a narrow `(k≤64, α≥0.30)` slice of
+  the coord-mask operator.**
+- **The Phase 0A k=64 result on mlp.down_proj that "matched the paper" is not
+  k-robust; that conclusion should be retracted from the running narrative
+  until estimator noise is reduced (more minibatches / larger batch / multiple
+  random projections).**
+- Numerical sanity: at k=64 with subspace operator, every direction's mean
+  curvature reproduces the Phase 0A value to 4+ sig figs (e.g. q_proj sub_princ
+  +9.665e-5 vs Phase 0A +9.665e-5). The two pipelines are computing the same
+  HVP on the same minibatch.
+- Per-minibatch variability is high: relative std ≈ 80–100 % on principal
+  directions. With 3 minibatches alone, several `princ_minus_comp` values are
+  within ±1σ of zero and should be treated as undetermined, not as flips.
+  Concretely the mlp.down_proj coord α=0.50 cells at k=256,512 (|P-C| ≈ 1e-6)
+  are noise, not signal.
+
+## Open questions Experiment A surfaced
+- The k=16 + α=0.50 corner where the paper's ordering holds on o_proj and
+  mlp.down_proj corresponds to a coord-mask whose density is 50 % but whose
+  *mask entries* are dominated by `|W_k|`'s largest values when k is small
+  (i.e. close to the top singular component alone). This is intuitively the
+  "most concentrated principal weights" condition. The fact that *only* this
+  corner agrees with the paper is consistent with Hypothesis 4 (magnitude /
+  precision confound): the mask there picks up high-magnitude entries of
+  `W_0`, which are also where the model is willing to take larger absolute
+  updates. Worth disentangling.
+- The flips on mlp.down_proj across k for the *subspace* operator are
+  particularly informative — they say the principal-subspace projection of
+  ΔW does not have a stable curvature signature on this MLP layer, even
+  before any operator choice. The paper's "principal weights have higher
+  curvature" picture cannot be cleanly tested on this layer without first
+  resolving this k-instability.

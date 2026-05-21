@@ -15,3 +15,7 @@ results/**/*.pdf
 
 # Minibatches
 results/**/minibatch*
+
+# Claude
+CLAUDE.md
+/.claude

@@ -1,0 +1,23 @@
+{
+  "pair_name": "public_pair_deepscaler",
+  "earlier_model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+  "later_model": "agentica-org/DeepScaleR-1.5B-Preview",
+  "dtype_for_load": "float32",
+  "selected_layers": [
+    "model.layers.13.self_attn.q_proj.weight",
+    "model.layers.13.self_attn.o_proj.weight",
+    "model.layers.13.mlp.down_proj.weight"
+  ],
+  "primary_layer": "model.layers.13.self_attn.q_proj.weight",
+  "experiment_a": {
+    "k_sweep": [16, 64, 256, 512],
+    "operators": ["subspace", "coord_mask"],
+    "coord_mask_alpha": 0.5,
+    "extra_alphas": [0.05, 0.30],
+    "num_random_seeds": 3,
+    "loss": "token_nll_full_sequence",
+    "out_subdir": "experiment_a"
+  },
+  "minibatch_file": "minibatch.pt",
+  "notes": "Experiment A: sweep k for the SVD-subspace operator AND introduce the paper's coordinate-mask operator (M_princ = Top_alpha(|U_k diag(S_k) V_k^T|)). Tests whether the curvature inversion on attention layers (q/o_proj) found at k=64 with subspace projection is (a) k-stable and (b) operator-stable. The minibatch + earlier checkpoint + NLL proxy loss are reused from Phase 0A; only the direction set differs. Random direction is matched in Frobenius norm to dW (k/operator-independent) so the random baseline holds across all settings."
+}
