@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import matplotlib
@@ -76,6 +77,33 @@ def _pmc_std(diffs: list[float]) -> float:
     return float(t.std(unbiased=False).item())
 
 
+def _binomial_two_sided_p(k: int, n: int) -> float:
+    """Two-sided exact binomial p-value for H0: P(P>C) = 0.5.
+
+    p = sum of PMFs whose value is <= the observed PMF. No scipy dep.
+    Returns 1.0 for n == 0.
+    """
+    if n == 0:
+        return 1.0
+    from math import comb
+    pmfs = [comb(n, i) * (0.5 ** n) for i in range(n + 1)]
+    observed = pmfs[k]
+    eps = 1e-12  # ties on the observed PMF should all be included
+    return min(1.0, sum(pmf for pmf in pmfs if pmf <= observed + eps))
+
+
+def _median_and_mad(diffs: list[float]) -> tuple[float, float]:
+    """Median and median absolute deviation (raw, no scaling)."""
+    if not diffs:
+        return 0.0, 0.0
+    arr = sorted(diffs)
+    n = len(arr)
+    med = arr[n // 2] if n % 2 else 0.5 * (arr[n // 2 - 1] + arr[n // 2])
+    abs_dev = sorted(abs(x - med) for x in diffs)
+    mad = abs_dev[n // 2] if n % 2 else 0.5 * (abs_dev[n // 2 - 1] + abs_dev[n // 2])
+    return med, mad
+
+
 def build_summary(per_layer: dict[str, dict], noise_z: float = 2.0) -> dict:
     """For each (layer, operator, k, alpha) collect princ + comp mean/std and
     a P-vs-C ordering tag.
@@ -131,6 +159,17 @@ def build_summary(per_layer: dict[str, dict], noise_z: float = 2.0) -> dict:
             t_crit = t_table.get(n_mb, 1.96)
             se = pmc_std / (n_mb ** 0.5) if n_mb else float("inf")
             is_undetermined_strict = abs(pmc_mean) < t_crit * se
+            # Sign-test on the per-minibatch (P-C) signs. Heavy-tailed σ can
+            # tank the z-test even when 13+ of 16 minibatches agree on the
+            # sign of the gap; the sign-test catches that.
+            k_pos = sum(1 for d in per_mb_pmc if d > 0)
+            sign_test_p = _binomial_two_sided_p(k_pos, n_mb) if n_mb else 1.0
+            if sign_test_p >= 0.05 or n_mb < 4:
+                sign_test_verdict = "undet"
+            else:
+                sign_test_verdict = "paper" if k_pos > n_mb / 2 else "inverted"
+            # Robust location/scale: median (P-C) and MAD across minibatches.
+            pmc_median, pmc_mad = _median_and_mad(per_mb_pmc)
             row = {
                 "layer": layer,
                 "operator": op,
@@ -147,13 +186,17 @@ def build_summary(per_layer: dict[str, dict], noise_z: float = 2.0) -> dict:
                 "per_mb_sign_pmc": per_mb_pmc,
                 "pmc_std": pmc_std,
                 "pmc_snr": snr,
+                "pmc_median": pmc_median,
+                "pmc_mad": pmc_mad,
                 "noise_floor_2sigma": noise_floor,
                 "is_undetermined_2sigma": is_undetermined,
                 "is_undetermined_strict_t": is_undetermined_strict,
+                "sign_test_p": sign_test_p,
+                "sign_test_verdict": sign_test_verdict,
                 "n_mb": n_mb,
             }
-            row["per_mb_princ_sharper_count"] = sum(1 for d in per_mb_pmc if d > 0)
-            row["per_mb_total"] = len(per_mb_pmc)
+            row["per_mb_princ_sharper_count"] = k_pos
+            row["per_mb_total"] = n_mb
             # Reference: random + realized for the same layer
             if "random_aggregate" in dirs:
                 row["random_mean"] = dirs["random_aggregate"]["mean_of_seed_means"]
@@ -234,17 +277,31 @@ def plot_curvature_vs_k(per_layer: dict[str, dict], summary: dict, out_path: Pat
     print(f"[plot] wrote {out_path}")
 
 
+def _short_layer_name(layer: str) -> str:
+    """e.g. 'model.layers.13.self_attn.q_proj.weight' -> 'L13 q_proj'."""
+    m = re.match(r"model\.layers\.(\d+)\.(?:self_attn|mlp)\.([^.]+)\.weight", layer)
+    if m:
+        return f"L{m.group(1)} {m.group(2)}"
+    return layer.split("model.layers.")[-1].replace(".weight", "")
+
+
 def plot_sign_flip_grid(summary: dict, out_path: Path, cfg: dict) -> None:
     """Heatmap showing sign(princ - comp) for each (operator, alpha) x k cell,
     one subplot per layer.
 
+    Paper-figure design choices:
+      - Three discrete colors (blue / light-gray / red) plus a hatch pattern on
+        undetermined cells so the figure is legible in B&W and color-blind safe.
+      - Per-cell label is dominated by the z-score (the statistic the noise
+        floor compares against); P-C magnitude and per-mb count appear as
+        smaller annotations.
+      - Embedded legend below the grid.
+      - dpi=200 for camera-ready output.
+
     Cell color encoding:
         +1 (red)   = principal sharper than complement (paper's claim)
         -1 (blue)  = inversion (principal lower curvature than complement)
-         0 (white) = UNDETERMINED: |P-C| < noise_z * std(per-mb P-C)
-
-    Per-cell label: `pmc_value`  + `count/n_mb`  +  `z = |P-C|/σ`  (or `u` if
-    undetermined under the 2σ heuristic).
+         0 (gray)  = UNDETERMINED: |P-C| < noise_z * std(per-mb P-C)
     """
     layers = sorted(set(r["layer"] for r in summary["rows"]))
     ks = sorted(set(r["k"] for r in summary["rows"]))
@@ -254,25 +311,37 @@ def plot_sign_flip_grid(summary: dict, out_path: Path, cfg: dict) -> None:
         op_alpha_pairs.append(("coord_mask", a, f"coord α={a:.2f}"))
 
     noise_z = summary.get("noise_z", 2.0)
+    # Sample one row to learn n_mb (assumed constant across cells).
+    n_mb = None
+    for r in summary["rows"]:
+        if "n_mb" in r:
+            n_mb = r["n_mb"]; break
 
-    fig, axes = plt.subplots(1, len(layers),
-                              figsize=(5.4 * len(layers), 2.9 + 0.4 * len(op_alpha_pairs)),
-                              sharey=True)
+    # Three discrete colors. RdBu_r centered at 0 gives red/white/blue; we want
+    # a slightly less-bright gray for undetermined so the boundary is visible.
+    from matplotlib.colors import ListedColormap
+    cmap = ListedColormap(["#3b6fb6", "#e8e8e8", "#c83737"])  # blue, gray, red
+
+    fig, axes = plt.subplots(
+        1, len(layers),
+        figsize=(5.0 * len(layers), 3.2 + 0.42 * len(op_alpha_pairs)),
+        sharey=True,
+    )
     if len(layers) == 1:
         axes = [axes]
 
     for ax, layer in zip(axes, layers):
-        cells = np.zeros((len(op_alpha_pairs), len(ks)))
-        text = [[""] * len(ks) for _ in op_alpha_pairs]
-        text_color = [["black"] * len(ks) for _ in op_alpha_pairs]
+        cells = np.full((len(op_alpha_pairs), len(ks)), np.nan)
+        # Per-cell label parts: (big_z, small_value, small_count, is_undet)
+        labels: list[list[tuple[str, str, str, bool]]] = [
+            [("", "", "", False)] * len(ks) for _ in op_alpha_pairs
+        ]
         for ri, (op, a, _label) in enumerate(op_alpha_pairs):
             for ci, k in enumerate(ks):
                 rec = next((r for r in summary["rows"]
                             if r["layer"] == layer and r["operator"] == op
                             and r["alpha"] == a and r["k"] == k), None)
                 if rec is None:
-                    cells[ri, ci] = np.nan
-                    text[ri][ci] = ""
                     continue
                 pmc = rec["princ_minus_comp"]
                 undet = rec["is_undetermined_2sigma"]
@@ -280,70 +349,129 @@ def plot_sign_flip_grid(summary: dict, out_path: Path, cfg: dict) -> None:
                     cells[ri, ci] = 0.0
                 else:
                     cells[ri, ci] = 1.0 if pmc > 0 else -1.0
-                # Format SNR (z = |P-C| / σ) defensively against infinities.
                 snr = rec["pmc_snr"]
-                if not (snr == snr) or snr == float("inf") or snr == float("-inf"):
-                    z_str = "z=∞"
+                if not (snr == snr) or snr in (float("inf"), float("-inf")):
+                    big_z = "z=∞"
                 else:
-                    z_str = f"z={snr:+.1f}"
-                undet_tag = "  [u]" if undet else ""
-                text[ri][ci] = (
-                    f"{pmc:+.1e}{undet_tag}\n"
-                    f"{rec['per_mb_princ_sharper_count']}/{rec['per_mb_total']}  {z_str}"
-                )
-                text_color[ri][ci] = "black"
-        # mask NaN
+                    big_z = f"z={snr:+.1f}"
+                pmc_str = f"P−C={pmc:+.1e}"
+                count_str = f"{rec['per_mb_princ_sharper_count']}/{rec['per_mb_total']}"
+                labels[ri][ci] = (big_z, pmc_str, count_str, undet)
+
         masked = np.ma.array(cells, mask=np.isnan(cells))
-        ax.imshow(masked, cmap="RdBu_r", vmin=-1.2, vmax=1.2, aspect="auto")
-        ax.set_xticks(range(len(ks)))
-        ax.set_xticklabels([str(k) for k in ks])
-        ax.set_yticks(range(len(op_alpha_pairs)))
-        ax.set_yticklabels([lab for _o, _a, lab in op_alpha_pairs], fontsize=9)
-        ax.set_xlabel("k")
-        ax.set_title(layer.split("model.layers.")[-1], fontsize=10)
+        ax.imshow(masked, cmap=cmap, vmin=-1.5, vmax=1.5, aspect="auto",
+                   interpolation="nearest")
+
+        # Hatching for undetermined cells (B&W safety).
         for ri in range(len(op_alpha_pairs)):
             for ci in range(len(ks)):
-                if text[ri][ci]:
-                    ax.text(ci, ri, text[ri][ci], ha="center", va="center",
-                             fontsize=7, color=text_color[ri][ci])
+                if cells[ri, ci] == 0.0:
+                    ax.add_patch(plt.Rectangle(
+                        (ci - 0.5, ri - 0.5), 1, 1,
+                        hatch="////", fill=False, edgecolor="#888888", lw=0,
+                    ))
+
+        ax.set_xticks(range(len(ks)))
+        ax.set_xticklabels([str(k) for k in ks], fontsize=10)
+        ax.set_yticks(range(len(op_alpha_pairs)))
+        ax.set_yticklabels([lab for _o, _a, lab in op_alpha_pairs], fontsize=10)
+        ax.set_xlabel("k (SVD rank)", fontsize=10)
+        ax.set_title(_short_layer_name(layer), fontsize=12, pad=6)
+        ax.tick_params(axis="both", which="both", length=0)
+
+        for ri in range(len(op_alpha_pairs)):
+            for ci in range(len(ks)):
+                big_z, pmc_str, count_str, undet = labels[ri][ci]
+                if not big_z:
+                    continue
+                # Choose label color for contrast: white on red/blue, black on gray.
+                base_col = "white" if cells[ri, ci] != 0.0 else "black"
+                ax.text(ci, ri - 0.20, big_z, ha="center", va="center",
+                         fontsize=11, fontweight="bold", color=base_col)
+                ax.text(ci, ri + 0.13, pmc_str, ha="center", va="center",
+                         fontsize=7, color=base_col)
+                ax.text(ci, ri + 0.30, count_str, ha="center", va="center",
+                         fontsize=7, color=base_col)
+                # Sign-test marker: small badge in the corner of the cell when
+                # the binomial sign test is significant (p<0.05). Black border,
+                # color = sign-test verdict color. Lets the reader see at a
+                # glance which "undetermined under z" cells are highly
+                # directional under a sign test.
+                rec_sig = next((r for r in summary["rows"]
+                                 if r["layer"] == layer and r["operator"] == op
+                                 and r["alpha"] == a and r["k"] == ks[ci]
+                                 ), None)
+                if rec_sig and rec_sig.get("sign_test_verdict", "undet") != "undet":
+                    sv = rec_sig["sign_test_verdict"]
+                    badge_color = "#c83737" if sv == "paper" else "#3b6fb6"
+                    ax.add_patch(plt.Circle(
+                        (ci + 0.38, ri - 0.38), 0.07,
+                        facecolor=badge_color, edgecolor="black", lw=0.8,
+                        zorder=10,
+                    ))
+
+    # Suptitle + embedded legend.
+    n_str = f"n_mb = {n_mb}" if n_mb is not None else ""
     fig.suptitle(
-        f"Sign of (principal − complement) mean curvature  "
-        f"[red=principal sharper (paper); blue=inverted; white=|P−C| < {noise_z}σ_paired]\n"
-        "Per-cell: P−C value (+ [u] if undetermined) · per-mb count P>C · "
-        "z = (P−C) / std_pmb(P−C)",
-        fontsize=10,
+        f"Directional curvature: principal vs complement (sign-flip grid, {noise_z}σ noise floor, {n_str})",
+        fontsize=12, y=0.995,
     )
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
-    fig.savefig(out_path, dpi=140)
+
+    # Legend axes at the bottom.
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    legend_handles = [
+        Patch(facecolor="#c83737", edgecolor="black", label="P > C  (paper-matching, z-test)"),
+        Patch(facecolor="#3b6fb6", edgecolor="black", label="P < C  (inversion, z-test)"),
+        Patch(facecolor="#e8e8e8", edgecolor="#888888", hatch="////",
+               label=f"undetermined under z (|P−C| < {noise_z}σ_paired)"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#3b6fb6",
+                markeredgecolor="black", markersize=8,
+                label="sign-test significant at p<0.05 (badge in cell corner)"),
+    ]
+    fig.legend(handles=legend_handles, loc="lower center", ncol=2,
+                bbox_to_anchor=(0.5, -0.04), frameon=False, fontsize=9)
+    fig.tight_layout(rect=[0, 0.06, 1, 0.95])
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"[plot] wrote {out_path}")
 
 
 def print_text_table(summary: dict) -> None:
     noise_z = summary.get("noise_z", 2.0)
-    print(f"\n=== experiment_a summary  (P-C noise flag: |P-C| < {noise_z}σ_paired) ===")
+    print(f"\n=== experiment_a summary  (z-test floor: |P-C| < {noise_z}σ_paired; "
+          f"sign-test: binomial two-sided p<0.05) ===")
     header = ("layer", "op", "k", "α", "P_mean", "C_mean", "P-C",
-              "σ_pmc", "z", "P>C?", "per-mb", "undet")
+              "σ_pmc", "z", "z?", "k/n", "p_sign", "sign?")
     fmt = ("{:36s}  {:10s}  {:>4s}  {:>5s}  {:>10s}  {:>10s}  {:>11s}  "
-           "{:>9s}  {:>6s}  {:>4s}  {:>5s}  {:>5s}")
+           "{:>9s}  {:>6s}  {:>4s}  {:>5s}  {:>7s}  {:>8s}")
     print(fmt.format(*header))
     rows = sorted(summary["rows"], key=lambda r: (r["layer"], r["operator"],
                                                     r["alpha"] if r["alpha"] is not None else -1.0,
                                                     r["k"]))
-    counts = {"red": 0, "blue": 0, "undet_2sig": 0, "undet_strict": 0, "total": 0}
+    counts = {"red_z": 0, "blue_z": 0, "undet_z": 0,
+              "red_sign": 0, "blue_sign": 0, "undet_sign": 0,
+              "z_undet_but_sign_resolved": 0, "total": 0}
     for r in rows:
         a_str = f"{r['alpha']:.2f}" if r["alpha"] is not None else "—"
         if r["is_undetermined_2sigma"]:
-            verdict = "?"
-            counts["undet_2sig"] += 1
+            z_verdict = "?"
+            counts["undet_z"] += 1
         elif r["princ_sharper"]:
-            verdict = "Y"
-            counts["red"] += 1
+            z_verdict = "Y"
+            counts["red_z"] += 1
         else:
-            verdict = "N"
-            counts["blue"] += 1
-        if r["is_undetermined_strict_t"]:
-            counts["undet_strict"] += 1
+            z_verdict = "N"
+            counts["blue_z"] += 1
+        sv = r.get("sign_test_verdict", "undet")
+        if sv == "paper":
+            sign_str = "Y"; counts["red_sign"] += 1
+        elif sv == "inverted":
+            sign_str = "N"; counts["blue_sign"] += 1
+        else:
+            sign_str = "?"; counts["undet_sign"] += 1
+        if r["is_undetermined_2sigma"] and sv != "undet":
+            counts["z_undet_but_sign_resolved"] += 1
         counts["total"] += 1
         snr = r["pmc_snr"]
         z_str = "inf" if snr == float("inf") else f"{snr:+.2f}"
@@ -357,15 +485,16 @@ def print_text_table(summary: dict) -> None:
             f"{r['princ_minus_comp']:+.2e}",
             f"{r['pmc_std']:.2e}",
             z_str,
-            verdict,
+            z_verdict,
             f"{r['per_mb_princ_sharper_count']}/{r['per_mb_total']}",
-            "Y" if r["is_undetermined_2sigma"] else " ",
+            f"{r.get('sign_test_p', 1.0):.1e}" if r.get('sign_test_p') is not None else "—",
+            sign_str,
         ))
     print(
-        f"\n[counts] total={counts['total']}  red(P>C)={counts['red']}  "
-        f"blue(P<C)={counts['blue']}  "
-        f"undetermined(2σ)={counts['undet_2sig']}  "
-        f"undetermined(strict t)={counts['undet_strict']}"
+        f"\n[counts] total={counts['total']}  |  "
+        f"z-test: paper={counts['red_z']} inv={counts['blue_z']} undet={counts['undet_z']}  |  "
+        f"sign-test: paper={counts['red_sign']} inv={counts['blue_sign']} undet={counts['undet_sign']}  |  "
+        f"z-undet-but-sign-resolved={counts['z_undet_but_sign_resolved']}"
     )
 
 
