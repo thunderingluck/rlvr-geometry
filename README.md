@@ -10,7 +10,6 @@ Tests whether RLVR genuinely follows lower-curvature directions during training,
 
 **Experiment A** (done): k-sweep + coordinate-mask comparison at n=3 minibatches, then a pre-registered scale-up to n=16. Headline: at n=16, every cell of the (layer × operator × k × α) grid lands inside the 2σ noise floor — the n=3 signal does not survive better variance estimates. See [Experiment A findings](#experiment-a-findings) below.
 
-See `CLAUDE.md` for the full research plan, hypotheses, and scope.
 
 ## Model pair
 
@@ -149,7 +148,6 @@ See `results/public_pair_deepscaler/experiment_a/{summary.json, prediction_check
 
 ```
 rlvr-geometry/
-  CLAUDE.md                      # full research plan
   README.md
   requirements.txt
   configs/
